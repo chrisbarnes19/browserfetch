@@ -2,6 +2,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup, Tag
 import minify_html
 import inscriptis
+import trafilatura
 
 
 def html_to_text(html: str, base_url: str = "") -> str:
@@ -87,6 +88,22 @@ def _table_to_markdown(table: Tag) -> str:
         lines.append("| " + " | ".join(row) + " |")
 
     return "\n" + "\n".join(lines) + "\n"
+
+
+def extract_main_content(html: str, base_url: str = "") -> str:
+    """Extract just the main article/content using trafilatura."""
+    result = trafilatura.extract(
+        html,
+        include_links=True,
+        include_tables=True,
+        include_images=True,
+        output_format="txt",
+        url=base_url or None,
+    )
+    if result:
+        return result
+    # Fallback to full extraction if trafilatura finds nothing
+    return html_to_text(html, base_url=base_url)
 
 
 def _srcset_first(srcset: str) -> str:
