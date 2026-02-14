@@ -6,15 +6,12 @@ Claude Code's built-in `WebFetch` tool uses a simple HTTP client that gets block
 
 ## Install as Claude Code Plugin
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+. Chromium is installed automatically on first use.
 
 ```bash
 # Add the marketplace and install the plugin
 /plugin marketplace add chrisbarnes19/browserfetch
 /plugin install browserfetch@chrisbarnes19-browserfetch
-
-# Install the Chromium browser (one-time setup)
-uv run --directory ~/.claude/plugins/browserfetch playwright install chromium
 ```
 
 ## Manual Setup
@@ -25,9 +22,10 @@ If you prefer to clone and register manually:
 git clone https://github.com/chrisbarnes19/browserfetch.git ~/projects/browserfetch
 cd ~/projects/browserfetch
 uv sync
-uv run playwright install chromium
 claude mcp add --transport stdio -s user browserfetch -- uv run --directory ~/projects/browserfetch python server.py
 ```
+
+Chromium will be installed automatically the first time the server starts.
 
 ## Tools
 
@@ -40,7 +38,7 @@ Fetch a URL and return clean text optimized for LLMs.
 | `url` | string | *required* | The URL to fetch |
 | `wait` | number | `2.0` | Seconds to wait after page load for JS rendering (max 30) |
 | `scroll` | boolean | `true` | Auto-scroll to trigger lazy-loaded content |
-| `max_chars` | integer | `40000` | Maximum characters to return. Set to `0` for no limit |
+| `max_chars` | integer | `40000` | Maximum characters to return (max 500000). Set to `0` for max |
 | `readability` | boolean | `true` | Extract only the main article content. Set to `false` for homepages or index pages |
 
 ### `screenshot`
@@ -54,11 +52,12 @@ Take a screenshot of a URL and return it as a PNG image.
 
 ## Security
 
-- **SSRF protection**: URLs are validated against private/reserved IP ranges before fetching. Redirect targets are also validated.
+- **SSRF protection**: URLs are validated against private/reserved IP ranges before fetching. Redirect targets are re-validated after both the HEAD pre-check and the browser navigation to prevent redirect-based SSRF. IPv6-mapped IPv4 addresses are handled.
 - **Scheme restriction**: Only `http` and `https` URLs are accepted.
 - **Content-type pre-check**: A HEAD request detects non-HTML content (PDFs, images, etc.) before launching the browser.
-- **Resource limits**: Wait time is capped at 30s, screenshots at 20MB / 16384px height, and concurrent requests are limited to 4.
-- **Chromium sandbox**: The browser runs with Chromium's security sandbox enabled by default. Set `BROWSERFETCH_NO_SANDBOX=1` only if running as root in Docker.
+- **Resource limits**: Wait time is capped at 30s, output at 500K characters, screenshots at 20MB / 16384px height, cache at 50MB, and concurrent requests are limited to 4.
+- **Chromium sandbox**: The browser runs with Chromium's security sandbox enabled by default. Set `BROWSERFETCH_NO_SANDBOX=1` only if running as root in Docker (must be exactly `1`, not any truthy value).
+- **Known limitation**: DNS rebinding attacks present a theoretical TOCTOU gap between URL validation and the actual browser connection. This is a known limitation common to SSRF defenses that use pre-flight DNS checks.
 
 ## Dependencies
 

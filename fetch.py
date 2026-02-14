@@ -3,6 +3,8 @@ import ipaddress
 import os
 import random
 import socket
+import subprocess
+import sys
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -33,11 +35,11 @@ class FetchResult:
 
 
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
 ]
 
 PRIVATE_NETWORKS = [
@@ -55,8 +57,15 @@ PRIVATE_NETWORKS = [
 _stealth = Stealth()
 _playwright = None
 _browser: Browser | None = None
-_browser_lock = asyncio.Lock()
+_browser_lock: asyncio.Lock | None = None
 _semaphore: asyncio.Semaphore | None = None
+
+
+def _get_lock() -> asyncio.Lock:
+    global _browser_lock
+    if _browser_lock is None:
+        _browser_lock = asyncio.Lock()
+    return _browser_lock
 
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -88,6 +97,9 @@ def _check_hostname(hostname: str) -> None:
         raise FetchError(f"Could not resolve hostname: {hostname}")
     for info in infos:
         addr = ipaddress.ip_address(info[4][0])
+        # Handle IPv6-mapped IPv4 addresses (e.g. ::ffff:127.0.0.1)
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+            addr = addr.ipv4_mapped
         for network in PRIVATE_NETWORKS:
             if addr in network:
                 raise FetchError(f"Access to private/internal addresses is blocked: {hostname} resolves to {addr}")
@@ -97,13 +109,31 @@ def _check_hostname(hostname: str) -> None:
 # Browser management
 # ---------------------------------------------------------------------------
 
+def _ensure_chromium_installed() -> None:
+    """Install Chromium via Playwright if not already present."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "--dry-run", "chromium"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                check=True, timeout=300,
+            )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        # --dry-run not supported in older playwright versions; try launching directly
+        pass
+
+
 async def get_browser() -> Browser:
     global _playwright, _browser
-    async with _browser_lock:
+    async with _get_lock():
         if _browser is None:
+            _ensure_chromium_installed()
             _playwright = await async_playwright().start()
             args = ["--disable-blink-features=AutomationControlled"]
-            if os.environ.get("BROWSERFETCH_NO_SANDBOX"):
+            if os.environ.get("BROWSERFETCH_NO_SANDBOX") == "1":
                 args.append("--no-sandbox")
             _browser = await _playwright.chromium.launch(headless=True, args=args)
     return _browser
@@ -126,7 +156,7 @@ async def new_page() -> Page:
 # Navigation
 # ---------------------------------------------------------------------------
 
-async def _navigate(page: Page, url: str) -> Response:
+async def _navigate(page: Page, url: str) -> Response | None:
     """Navigate to a URL, trying networkidle first then falling back to domcontentloaded."""
     response = None
     try:
@@ -173,6 +203,9 @@ async def fetch_page(url: str, wait: float = 2.0, scroll: bool = True) -> FetchR
             response = await _navigate(page, url)
             status = response.status if response else 0
             final_url = page.url
+            # Re-validate after redirects to prevent SSRF via redirect chain
+            if final_url != url:
+                validate_url(final_url)
             if wait > 0:
                 await page.wait_for_timeout(wait * 1000)
             if scroll:
@@ -190,6 +223,10 @@ async def take_screenshot(url: str, full_page: bool = False) -> bytes:
         page = await new_page()
         try:
             await _navigate(page, url)
+            # Re-validate after redirects to prevent SSRF via redirect chain
+            final_url = page.url
+            if final_url != url:
+                validate_url(final_url)
             await page.wait_for_timeout(1000)
             if full_page:
                 height = await page.evaluate("document.body.scrollHeight")

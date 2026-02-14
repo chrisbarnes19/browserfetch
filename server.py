@@ -12,6 +12,13 @@ mcp = FastMCP("browserfetch")
 _cache: dict[str, tuple[float, FetchResult]] = {}
 _CACHE_TTL = 300  # 5 minutes
 _CACHE_MAX_ENTRIES = 20
+_CACHE_MAX_BYTES = 50 * 1024 * 1024  # 50 MB total HTML in cache
+
+MAX_CHARS_LIMIT = 500_000
+
+
+def _cache_size_bytes() -> int:
+    return sum(len(r.html.encode("utf-8", errors="replace")) for _, r in _cache.values())
 
 
 def _get_cached(url: str) -> FetchResult | None:
@@ -25,9 +32,12 @@ def _get_cached(url: str) -> FetchResult | None:
 
 def _set_cached(url: str, result: FetchResult) -> None:
     _cache[url] = (time.time(), result)
-    while len(_cache) > _CACHE_MAX_ENTRIES:
-        oldest = min(_cache, key=lambda k: _cache[k][0])
-        del _cache[oldest]
+    # Evict oldest entries if over limits (dict maintains insertion order)
+    while len(_cache) > _CACHE_MAX_ENTRIES or _cache_size_bytes() > _CACHE_MAX_BYTES:
+        if not _cache:
+            break
+        oldest_key = next(iter(_cache))
+        del _cache[oldest_key]
 
 
 @mcp.tool()
@@ -42,9 +52,13 @@ async def fetch(url: str, wait: float = 2.0, scroll: bool = True,
         url: The URL to fetch
         wait: Seconds to wait after page load for JS rendering (default 2.0, max 30.0)
         scroll: Auto-scroll to trigger lazy-loaded content (default True)
-        max_chars: Maximum characters to return (default 40000). Set to 0 for no limit.
+        max_chars: Maximum characters to return (default 40000, max 500000). Set to 0 for max.
         readability: Extract only the main article content, removing boilerplate (default True). Set to False for homepages or index pages where you want everything.
     """
+    # Cap max_chars to prevent memory exhaustion
+    if max_chars <= 0 or max_chars > MAX_CHARS_LIMIT:
+        max_chars = MAX_CHARS_LIMIT
+
     try:
         await head_check(url)
         cached = _get_cached(url)
@@ -73,7 +87,7 @@ async def fetch(url: str, wait: float = 2.0, scroll: bool = True,
     if header:
         text = header + "\n\n" + text
 
-    if max_chars > 0 and len(text) > max_chars:
+    if len(text) > max_chars:
         text = text[:max_chars] + f"\n\n[Truncated — {len(text)} total characters, showing first {max_chars}]"
     return text
 
@@ -99,4 +113,7 @@ async def screenshot(url: str, full_page: bool = False) -> Image:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        asyncio.run(shutdown())
