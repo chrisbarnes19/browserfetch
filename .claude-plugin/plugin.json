@@ -1,11 +1,7 @@
 {
   "name": "browserfetch",
-  "version": "0.2.0",
   "description": "MCP server that fetches web pages using a stealth Playwright browser and returns clean, LLM-optimized text",
   "author": {
-    "name": "Chris Barnes",
-    "url": "https://github.com/chrisbarnes19"
-  },
-  "homepage": "https://github.com/chrisbarnes19/browserfetch",
-  "license": "MIT"
+    "name": "Chris Barnes"
+  }
 }

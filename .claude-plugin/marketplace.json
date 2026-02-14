@@ -3,16 +3,25 @@
   "description": "Stealth Playwright browser for fetching web pages as clean, LLM-optimized text",
   "owner": {
     "name": "Chris Barnes",
-    "url": "https://github.com/chrisbarnes19/browserfetch"
+    "email": "chris.barnes19@gmail.com"
   },
   "plugins": [
     {
       "name": "browserfetch",
-      "displayName": "BrowserFetch",
       "description": "MCP server that fetches web pages using a stealth Playwright browser and returns clean, LLM-optimized text. Bypasses bot detection that blocks Claude Code's built-in WebFetch.",
       "version": "0.2.0",
-      "source": ".",
-      "homepage": "https://github.com/chrisbarnes19/browserfetch"
+      "source": "./",
+      "author": {
+        "name": "Chris Barnes"
+      },
+      "repository": "https://github.com/chrisbarnes19/browserfetch",
+      "license": "MIT",
+      "mcpServers": {
+        "browserfetch": {
+          "command": "uv",
+          "args": ["run", "--directory", "${PLUGIN_ROOT}", "python", "server.py"]
+        }
+      }
     }
   ]
 }
