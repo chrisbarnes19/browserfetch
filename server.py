@@ -1,5 +1,5 @@
-import atexit
 import asyncio
+import sys
 import time
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
@@ -11,6 +11,7 @@ mcp = FastMCP("webfetch")
 # Simple TTL cache: {url: (timestamp, FetchResult)}
 _cache: dict[str, tuple[float, FetchResult]] = {}
 _CACHE_TTL = 300  # 5 minutes
+_CACHE_MAX_ENTRIES = 20
 
 
 def _get_cached(url: str) -> FetchResult | None:
@@ -24,8 +25,7 @@ def _get_cached(url: str) -> FetchResult | None:
 
 def _set_cached(url: str, result: FetchResult) -> None:
     _cache[url] = (time.time(), result)
-    # Evict old entries if cache grows too large
-    if len(_cache) > 100:
+    while len(_cache) > _CACHE_MAX_ENTRIES:
         oldest = min(_cache, key=lambda k: _cache[k][0])
         del _cache[oldest]
 
@@ -40,7 +40,7 @@ async def fetch(url: str, wait: float = 2.0, scroll: bool = True,
 
     Args:
         url: The URL to fetch
-        wait: Seconds to wait after page load for JS rendering (default 2.0)
+        wait: Seconds to wait after page load for JS rendering (default 2.0, max 30.0)
         scroll: Auto-scroll to trigger lazy-loaded content (default True)
         max_chars: Maximum characters to return (default 40000). Set to 0 for no limit.
         readability: Extract only the main article content, removing boilerplate (default True). Set to False for homepages or index pages where you want everything.
@@ -55,6 +55,8 @@ async def fetch(url: str, wait: float = 2.0, scroll: bool = True,
             _set_cached(url, result)
     except FetchError as e:
         return f"Error: {e}"
+    except Exception as e:
+        return f"Error: unexpected failure fetching {url}: {e}"
 
     if readability:
         text = extract_main_content(result.html, base_url=result.url)
@@ -91,21 +93,10 @@ async def screenshot(url: str, full_page: bool = False) -> Image:
         png_bytes = await take_screenshot(url, full_page=full_page)
     except FetchError as e:
         raise ValueError(str(e))
+    except Exception as e:
+        raise ValueError(f"Unexpected failure screenshotting {url}: {e}")
     return Image(data=png_bytes, format="png")
 
-
-def _cleanup():
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(shutdown())
-        else:
-            loop.run_until_complete(shutdown())
-    except Exception:
-        pass
-
-
-atexit.register(_cleanup)
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

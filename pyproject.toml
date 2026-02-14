@@ -1,15 +1,27 @@
 [project]
 name = "webfetch"
-version = "0.1.0"
-description = "Add your description here"
-requires-python = ">=3.13"
+version = "0.2.0"
+description = "MCP server that fetches web pages using a stealth Playwright browser and returns clean, LLM-optimized text"
+requires-python = ">=3.11"
+license = "MIT"
+readme = "README.md"
 dependencies = [
     "aiohttp>=3.11.0",
-    "beautifulsoup4>=4.14.3",
-    "inscriptis>=2.7.0",
+    "beautifulsoup4>=4.13.0",
+    "inscriptis>=2.5.0",
     "mcp>=1.26.0",
-    "minify-html>=0.18.1",
-    "playwright>=1.58.0",
-    "playwright-stealth>=2.0.2",
+    "minify-html>=0.16.0",
+    "playwright>=1.48.0",
+    "playwright-stealth>=2.0.0",
     "trafilatura>=2.0.0",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,11 +1,21 @@
 import asyncio
+import ipaddress
+import os
 import random
+import socket
 from dataclasses import dataclass
+from urllib.parse import urlparse
+
+import aiohttp
 from playwright.async_api import (
     async_playwright, Browser, BrowserContext, Page, Response,
     Error as PlaywrightError,
 )
 from playwright_stealth import Stealth
+
+MAX_WAIT = 30.0
+MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024  # 20 MB
+MAX_SCREENSHOT_HEIGHT = 16384
 
 
 class FetchError(Exception):
@@ -30,20 +40,72 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
 ]
 
+PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
 _stealth = Stealth()
 _playwright = None
 _browser: Browser | None = None
-_semaphore = asyncio.Semaphore(4)
+_browser_lock = asyncio.Lock()
+_semaphore: asyncio.Semaphore | None = None
 
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(4)
+    return _semaphore
+
+
+# ---------------------------------------------------------------------------
+# URL validation (SSRF protection)
+# ---------------------------------------------------------------------------
+
+def validate_url(url: str) -> None:
+    """Reject URLs targeting internal networks or non-HTTP schemes."""
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise FetchError(f"Only http and https URLs are supported, got: {parsed.scheme!r}")
+    if not parsed.hostname:
+        raise FetchError(f"Invalid URL (no hostname): {url}")
+    _check_hostname(parsed.hostname)
+
+
+def _check_hostname(hostname: str) -> None:
+    """Resolve hostname and verify it doesn't point to a private/reserved IP."""
+    try:
+        infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        raise FetchError(f"Could not resolve hostname: {hostname}")
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0])
+        for network in PRIVATE_NETWORKS:
+            if addr in network:
+                raise FetchError(f"Access to private/internal addresses is blocked: {hostname} resolves to {addr}")
+
+
+# ---------------------------------------------------------------------------
+# Browser management
+# ---------------------------------------------------------------------------
 
 async def get_browser() -> Browser:
     global _playwright, _browser
-    if _browser is None:
-        _playwright = await async_playwright().start()
-        _browser = await _playwright.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
+    async with _browser_lock:
+        if _browser is None:
+            _playwright = await async_playwright().start()
+            args = ["--disable-blink-features=AutomationControlled"]
+            if os.environ.get("WEBFETCH_NO_SANDBOX"):
+                args.append("--no-sandbox")
+            _browser = await _playwright.chromium.launch(headless=True, args=args)
     return _browser
 
 
@@ -59,6 +121,10 @@ async def new_page() -> Page:
     page = await context.new_page()
     return page
 
+
+# ---------------------------------------------------------------------------
+# Navigation
+# ---------------------------------------------------------------------------
 
 async def _navigate(page: Page, url: str) -> Response:
     """Navigate to a URL, trying networkidle first then falling back to domcontentloaded."""
@@ -94,8 +160,14 @@ def _is_fatal_nav_error(e: PlaywrightError) -> bool:
     return any(f in msg for f in fatal)
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 async def fetch_page(url: str, wait: float = 2.0, scroll: bool = True) -> FetchResult:
-    async with _semaphore:
+    validate_url(url)
+    wait = max(0.0, min(wait, MAX_WAIT))
+    async with _get_semaphore():
         page = await new_page()
         try:
             response = await _navigate(page, url)
@@ -113,14 +185,43 @@ async def fetch_page(url: str, wait: float = 2.0, scroll: bool = True) -> FetchR
 
 
 async def take_screenshot(url: str, full_page: bool = False) -> bytes:
-    async with _semaphore:
+    validate_url(url)
+    async with _get_semaphore():
         page = await new_page()
         try:
             await _navigate(page, url)
             await page.wait_for_timeout(1000)
-            return await page.screenshot(full_page=full_page, type="png")
+            if full_page:
+                height = await page.evaluate("document.body.scrollHeight")
+                if height > MAX_SCREENSHOT_HEIGHT:
+                    await page.set_viewport_size({"width": 1280, "height": MAX_SCREENSHOT_HEIGHT})
+                    full_page = False
+            png = await page.screenshot(full_page=full_page, type="png")
+            if len(png) > MAX_SCREENSHOT_BYTES:
+                raise FetchError(f"Screenshot too large ({len(png) // 1024 // 1024}MB, limit is {MAX_SCREENSHOT_BYTES // 1024 // 1024}MB)")
+            return png
         finally:
             await page.context.close()
+
+
+async def head_check(url: str) -> None:
+    """Quick HEAD request to detect non-HTML content before launching browser."""
+    validate_url(url)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url, timeout=aiohttp.ClientTimeout(total=5),
+                                    allow_redirects=True) as resp:
+                # Re-validate the final URL after redirects
+                final_url = str(resp.url)
+                if final_url != url:
+                    validate_url(final_url)
+                ct = resp.headers.get("Content-Type", "")
+                if ct and not any(t in ct for t in ["text/html", "text/plain", "application/xhtml"]):
+                    raise FetchError(
+                        f"URL content type is '{ct}', not a web page: {url}"
+                    )
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        pass  # let Playwright handle network errors
 
 
 async def _auto_scroll(page: Page, max_scrolls: int = 10):
@@ -132,26 +233,7 @@ async def _auto_scroll(page: Page, max_scrolls: int = 10):
         prev_height = height
         await page.keyboard.press("PageDown")
         await page.wait_for_timeout(500)
-    # scroll back to top
     await page.evaluate("window.scrollTo(0, 0)")
-
-
-async def head_check(url: str) -> None:
-    """Quick HEAD request to detect non-HTML content before launching full browser."""
-    import aiohttp
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.head(url, timeout=aiohttp.ClientTimeout(total=5),
-                                     allow_redirects=True) as resp:
-                ct = resp.headers.get("Content-Type", "")
-                if ct and not any(t in ct for t in ["text/html", "text/plain", "application/xhtml"]):
-                    raise FetchError(
-                        f"URL content type is '{ct}', not a web page: {url}"
-                    )
-    except aiohttp.ClientError:
-        pass  # let Playwright handle it
-    except asyncio.TimeoutError:
-        pass  # let Playwright handle it
 
 
 async def shutdown():
