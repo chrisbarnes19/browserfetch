@@ -103,7 +103,7 @@ async def get_browser() -> Browser:
         if _browser is None:
             _playwright = await async_playwright().start()
             args = ["--disable-blink-features=AutomationControlled"]
-            if os.environ.get("WEBFETCH_NO_SANDBOX"):
+            if os.environ.get("BROWSERFETCH_NO_SANDBOX"):
                 args.append("--no-sandbox")
             _browser = await _playwright.chromium.launch(headless=True, args=args)
     return _browser

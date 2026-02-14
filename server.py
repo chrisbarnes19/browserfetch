@@ -6,7 +6,7 @@ from mcp.server.fastmcp.utilities.types import Image
 from fetch import fetch_page, take_screenshot, head_check, shutdown, FetchError, FetchResult
 from process import html_to_text, extract_main_content
 
-mcp = FastMCP("webfetch")
+mcp = FastMCP("browserfetch")
 
 # Simple TTL cache: {url: (timestamp, FetchResult)}
 _cache: dict[str, tuple[float, FetchResult]] = {}

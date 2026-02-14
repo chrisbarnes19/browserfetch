@@ -1,5 +1,5 @@
 [project]
-name = "webfetch"
+name = "browserfetch"
 version = "0.2.0"
 description = "MCP server that fetches web pages using a stealth Playwright browser and returns clean, LLM-optimized text"
 requires-python = ">=3.11"

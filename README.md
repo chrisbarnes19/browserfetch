@@ -1,8 +1,8 @@
-# webfetch
+# browserfetch
 
 An MCP server that fetches web pages using a stealth Playwright browser and returns clean, LLM-optimized text.
 
-Claude Code's built-in `WebFetch` tool uses a simple HTTP client that gets blocked by many websites. `webfetch` uses a headless Chromium browser with stealth patches to bypass bot detection, handles JavaScript-rendered content, and returns clean markdown-formatted text.
+Claude Code's built-in `WebFetch` tool uses a simple HTTP client that gets blocked by many websites. `browserfetch` uses a headless Chromium browser with stealth patches to bypass bot detection, handles JavaScript-rendered content, and returns clean markdown-formatted text.
 
 ## Tools
 
@@ -32,7 +32,7 @@ Take a screenshot of a URL and return it as a PNG image.
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
 ```bash
-cd ~/projects/webfetch
+cd ~/projects/browserfetch
 uv sync
 uv run playwright install chromium
 ```
@@ -40,7 +40,7 @@ uv run playwright install chromium
 Register with Claude Code:
 
 ```bash
-claude mcp add --transport stdio -s user webfetch -- uv run --directory ~/projects/webfetch python server.py
+claude mcp add --transport stdio -s user browserfetch -- uv run --directory ~/projects/browserfetch python server.py
 ```
 
 ## Security
@@ -49,7 +49,7 @@ claude mcp add --transport stdio -s user webfetch -- uv run --directory ~/projec
 - **Scheme restriction**: Only `http` and `https` URLs are accepted.
 - **Content-type pre-check**: A HEAD request detects non-HTML content (PDFs, images, etc.) before launching the browser.
 - **Resource limits**: Wait time is capped at 30s, screenshots at 20MB / 16384px height, and concurrent requests are limited to 4.
-- **Chromium sandbox**: The browser runs with Chromium's security sandbox enabled by default. Set `WEBFETCH_NO_SANDBOX=1` only if running as root in Docker.
+- **Chromium sandbox**: The browser runs with Chromium's security sandbox enabled by default. Set `BROWSERFETCH_NO_SANDBOX=1` only if running as root in Docker.
 
 ## Dependencies
 
