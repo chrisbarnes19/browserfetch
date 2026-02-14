@@ -1,6 +1,6 @@
 {
   "browserfetch": {
     "command": "uv",
-    "args": ["run", "--directory", "${PLUGIN_ROOT}", "python", "server.py"]
+    "args": ["run", "--directory", "${CLAUDE_PLUGIN_ROOT}", "python", "server.py"]
   }
 }
