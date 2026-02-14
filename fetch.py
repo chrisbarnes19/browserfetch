@@ -206,6 +206,7 @@ async def fetch_page(url: str, wait: float = 2.0, scroll: bool = True) -> FetchR
             # Re-validate after redirects to prevent SSRF via redirect chain
             if final_url != url:
                 validate_url(final_url)
+            await _dismiss_cookie_banner(page)
             if wait > 0:
                 await page.wait_for_timeout(wait * 1000)
             if scroll:
@@ -227,6 +228,7 @@ async def take_screenshot(url: str, full_page: bool = False) -> bytes:
             final_url = page.url
             if final_url != url:
                 validate_url(final_url)
+            await _dismiss_cookie_banner(page)
             await page.wait_for_timeout(1000)
             if full_page:
                 height = await page.evaluate("document.body.scrollHeight")
@@ -259,6 +261,69 @@ async def head_check(url: str) -> None:
                     )
     except (aiohttp.ClientError, asyncio.TimeoutError):
         pass  # let Playwright handle network errors
+
+
+COOKIE_ACCEPT_SELECTORS = [
+    # Common "Accept All" / "Accept" buttons by text
+    "button:has-text('Accept All')",
+    "button:has-text('Accept all')",
+    "button:has-text('Accept Cookies')",
+    "button:has-text('Accept cookies')",
+    "button:has-text('Allow All')",
+    "button:has-text('Allow all')",
+    "button:has-text('I Agree')",
+    "button:has-text('I agree')",
+    "button:has-text('Got it')",
+    "button:has-text('OK')",
+    # Common by ID / class / aria-label
+    "[id*='cookie'] button:has-text('Accept')",
+    "[class*='cookie'] button:has-text('Accept')",
+    "[id*='consent'] button:has-text('Accept')",
+    "[class*='consent'] button:has-text('Accept')",
+    "[aria-label*='cookie' i] button",
+    "[aria-label*='Accept' i][role='button']",
+    # OneTrust (very common enterprise cookie manager)
+    "#onetrust-accept-btn-handler",
+    # Cookiebot
+    "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
+    # Quantcast / other common frameworks
+    ".qc-cmp2-summary-buttons button[mode='primary']",
+    "[data-testid='cookie-policy-dialog-accept-button']",
+]
+
+
+async def _dismiss_cookie_banner(page: Page) -> None:
+    """Try to click a cookie consent 'Accept' button and remove banner from DOM."""
+    clicked = False
+    for selector in COOKIE_ACCEPT_SELECTORS:
+        try:
+            btn = page.locator(selector).first
+            if await btn.is_visible(timeout=200):
+                await btn.click(timeout=1000)
+                await page.wait_for_timeout(500)
+                clicked = True
+                break
+        except PlaywrightError:
+            continue
+
+    if clicked:
+        # Remove common cookie banner containers from the DOM so they don't
+        # pollute content extraction (banners often stay hidden in the DOM).
+        await page.evaluate("""() => {
+            const selectors = [
+                '#onetrust-banner-sdk', '#onetrust-consent-sdk',
+                '#CybotCookiebotDialog', '#cookiebanner',
+                '.qc-cmp2-container',
+                '[class*="cookie-banner"]', '[class*="cookie-consent"]',
+                '[class*="cookieBanner"]', '[class*="cookieConsent"]',
+                '[id*="cookie-banner"]', '[id*="cookie-consent"]',
+                '[id*="cookieBanner"]', '[id*="cookieConsent"]',
+                '[aria-label*="cookie" i]',
+            ];
+            for (const sel of selectors) {
+                document.querySelectorAll(sel).forEach(el => el.remove());
+            }
+        }""")
 
 
 async def _auto_scroll(page: Page, max_scrolls: int = 10):
