@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "browserfetch": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "python",
+        "server.py"
+      ],
+      "env": {}
+    }
+  }
+}

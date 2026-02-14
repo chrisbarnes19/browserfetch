@@ -4,6 +4,31 @@ An MCP server that fetches web pages using a stealth Playwright browser and retu
 
 Claude Code's built-in `WebFetch` tool uses a simple HTTP client that gets blocked by many websites. `browserfetch` uses a headless Chromium browser with stealth patches to bypass bot detection, handles JavaScript-rendered content, and returns clean markdown-formatted text.
 
+## Install as Claude Code Plugin
+
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
+
+```bash
+# Add the marketplace and install the plugin
+/plugin marketplace add chrisbarnes19/browserfetch
+/plugin install browserfetch@chrisbarnes19-browserfetch
+
+# Install the Chromium browser (one-time setup)
+uv run --directory ~/.claude/plugins/browserfetch playwright install chromium
+```
+
+## Manual Setup
+
+If you prefer to clone and register manually:
+
+```bash
+git clone https://github.com/chrisbarnes19/browserfetch.git ~/projects/browserfetch
+cd ~/projects/browserfetch
+uv sync
+uv run playwright install chromium
+claude mcp add --transport stdio -s user browserfetch -- uv run --directory ~/projects/browserfetch python server.py
+```
+
 ## Tools
 
 ### `fetch`
@@ -26,22 +51,6 @@ Take a screenshot of a URL and return it as a PNG image.
 |-----------|------|---------|-------------|
 | `url` | string | *required* | The URL to screenshot |
 | `full_page` | boolean | `false` | Capture the full scrollable page (capped at 16384px height) |
-
-## Setup
-
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
-
-```bash
-cd ~/projects/browserfetch
-uv sync
-uv run playwright install chromium
-```
-
-Register with Claude Code:
-
-```bash
-claude mcp add --transport stdio -s user browserfetch -- uv run --directory ~/projects/browserfetch python server.py
-```
 
 ## Security
 
